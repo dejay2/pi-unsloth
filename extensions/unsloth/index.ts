@@ -320,6 +320,11 @@ async function cmdConfigure(pi: ExtensionAPI, ctx: ExtensionCommandContext): Pro
 	const settings = await settingsWizard(adaptUi(ctx), model, detected, existing);
 	saveModel(pi, provider, model, settings);
 	ctx.ui.notify(`Saved settings for ${choice}.`, "info");
+	if (await ctx.ui.confirm("Apply on server now?", "Reload the model on the Unsloth server with these settings now?")) {
+		await applyLoadSettings(ctx, provider, choice, settings);
+	} else {
+		ctx.ui.notify("Settings apply on next model switch, or via /unsloth → Apply settings.", "info");
+	}
 }
 
 async function cmdApplyNow(ctx: ExtensionCommandContext): Promise<void> {
