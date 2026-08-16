@@ -1,0 +1,24 @@
+{
+  "name": "pi-unsloth",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "pi extension: first-class Unsloth Studio integration — /login setup, per-model llama.cpp settings, thinking-aware sampling",
+  "license": "MIT",
+  "keywords": ["pi-package"],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": { "optional": true },
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-tui": { "optional": true }
+  },
+  "pi": {
+    "extensions": ["./extensions/unsloth/index.ts"]
+  },
+  "scripts": {
+    "test": "node extensions/unsloth/test-config.ts && node extensions/unsloth/test-wizard.ts && node extensions/unsloth/test-api.ts && node extensions/unsloth/test-wiring.ts"
+  }
+}
