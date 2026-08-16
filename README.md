@@ -46,7 +46,7 @@ context size, KV cache dtype, speculative decoding (MTP auto/off/mtp/ngram),
 draft tokens, parallel slots, raw extra llama.cpp args.
 
 **Sampling (always applied)** — written to `models.json` `samplingParams`:
-temperature, top_p, top_k, min_p, repetition penalty, seed.
+temperature, top_p, top_k, min_p, presence penalty, frequency penalty, repetition penalty, seed (pins the RNG for reproducible outputs).
 
 **Thinking-conditional sampling** — when pi's thinking level isn't "off", a
 `before_provider_request` hook swaps in the thinking sampling set

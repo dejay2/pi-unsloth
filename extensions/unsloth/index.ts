@@ -215,7 +215,9 @@ function registerLoginVehicle(pi: ExtensionAPI): void {
 function adaptUi(ctx: ExtensionCommandContext): WizardInteraction {
 	return {
 		text: async (message, placeholder) => {
-			const r = await ctx.ui.input(message, placeholder);
+			// NOTE: pi's extension text input ignores the placeholder arg, so
+			// fold it into the title where it is always visible.
+			const r = await ctx.ui.input(placeholder ? `${message}  [${placeholder}]` : message);
 			if (r === undefined) throw new Error("Cancelled");
 			return r;
 		},

@@ -94,8 +94,8 @@ await test("settingsWizard: full answers flow into all settings groups", async (
 			"4",     // spec draft n
 			"2",     // parallel
 			"--flash-attn", // extra args
-			"0.7", "0.8", "20", "0.05", "1.1", "", // sampling (temp, top_p, top_k, min_p, rep, seed)
-			"0.6", "0.95", "20", "0.0", "1.0", "", // thinking sampling (custom)
+			"0.7", "0.8", "20", "0.05", "0.1", "0.0", "1.1", "", // sampling (temp, top_p, top_k, min_p, presence, frequency, rep, seed)
+			"0.6", "0.95", "20", "0.0", "0.0", "0.0", "1.0", "", // thinking sampling (custom)
 		],
 		selects: ["q8_0", "off", "custom"],
 	});
@@ -106,8 +106,9 @@ await test("settingsWizard: full answers flow into all settings groups", async (
 	assert.equal(s.load?.specDraftNMax, 4);
 	assert.equal(s.load?.nParallel, 2);
 	assert.deepEqual(s.load?.extraArgs, ["--flash-attn"]);
-	assert.equal(s.sampling?.temperature, 0.7);
+		assert.equal(s.sampling?.temperature, 0.7);
 	assert.equal(s.sampling?.minP, 0.05);
+	assert.equal(s.sampling?.presencePenalty, 0.1);
 	assert.equal(s.samplingThinking?.temperature, 0.6);
 	assert.equal(s.samplingThinking?.topP, 0.95);
 	// thinking auto-configured from detection (loaded model)
@@ -118,7 +119,7 @@ await test("settingsWizard: full answers flow into all settings groups", async (
 
 await test("settingsWizard: empty answers keep defaults, 'same' skips thinking sampling", async () => {
 	const { ui } = scripted({
-		texts: ["", "", "", "", "", "", "", "", "", ""],
+		texts: ["", "", "", "", "", "", "", "", "", "", "", ""],
 		selects: ["server default", "auto", "same"],
 	});
 	const s = await settingsWizard(ui, { id: "org/m:Q4" }, detected);
@@ -130,7 +131,7 @@ await test("settingsWizard: empty answers keep defaults, 'same' skips thinking s
 
 await test("settingsWizard: non-loaded model without detection gets reasoning=false, no thinking question", async () => {
 	const { ui } = scripted({
-		texts: ["", "", "", "", "", "", "", "", "", ""],
+		texts: ["", "", "", "", "", "", "", "", "", "", "", ""],
 		selects: ["server default", "auto"],
 	});
 	const s = await settingsWizard(ui, { id: "org/other:Q4" }, detected);
@@ -139,7 +140,7 @@ await test("settingsWizard: non-loaded model without detection gets reasoning=fa
 
 await test("settingsWizard: 'recommended' thinking sampling preset", async () => {
 	const { ui } = scripted({
-		texts: ["", "", "", "", "", "", "", "", "", ""],
+		texts: ["", "", "", "", "", "", "", "", "", "", "", ""],
 		selects: ["server default", "auto", "recommended"],
 	});
 	const s = await settingsWizard(ui, { id: "org/m:Q4" }, detected);
@@ -163,7 +164,7 @@ const existingSettings = {
 
 await test("reconfigure: all-empty answers keep every current setting", async () => {
 	const { ui } = scripted({
-		texts: ["", "", "", "", "", "", "", "", "", ""],
+		texts: ["", "", "", "", "", "", "", "", "", "", "", ""],
 		selects: ["__keep", "__keep", "__keep"],
 	});
 	const s = await settingsWizard(ui, { id: "org/m:Q4", contextWindow: 65536 }, detected, existingSettings);
@@ -180,7 +181,7 @@ await test("reconfigure: all-empty answers keep every current setting", async ()
 
 await test("reconfigure: '-' clears a value, new value replaces", async () => {
 	const { ui } = scripted({
-		texts: ["131072", "-", "-", "-", "", "", "", "", "", "-"], // ctx=131072, clear draft/parallel/extra, sampling defaults, clear seed
+		texts: ["131072", "-", "-", "-", "", "", "", "", "", "", "", "-"], // ctx=131072, clear draft/parallel/extra, sampling defaults, clear seed
 		selects: ["f16", "mtp", "same"],
 	});
 	const s = await settingsWizard(ui, { id: "org/m:Q4" }, detected, existingSettings);

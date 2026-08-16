@@ -184,6 +184,8 @@ export async function settingsWizard(
 		topP: 0.8,
 		topK: 20,
 		minP: 0.0,
+		presencePenalty: 0.0,
+		frequencyPenalty: 0.0,
 		repeatPenalty: 1.05,
 	}, existing?.sampling);
 
@@ -210,7 +212,7 @@ export async function settingsWizard(
 		} else if (choice === "recommended") {
 			samplingThinking = { temperature: 0.6, topP: 0.95, topK: 20, minP: 0.0 };
 		} else if (choice === "custom") {
-			samplingThinking = await samplingWizard(ui, { temperature: 0.6, topP: 0.95, topK: 20, minP: 0.0 }, existing?.samplingThinking);
+			samplingThinking = await samplingWizard(ui, { temperature: 0.6, topP: 0.95, topK: 20, minP: 0.0, presencePenalty: 0.0, frequencyPenalty: 0.0, repeatPenalty: 1.0 }, existing?.samplingThinking);
 		}
 	}
 
@@ -230,18 +232,25 @@ async function samplingWizard(
 	existing?: SamplingSettings,
 ): Promise<SamplingSettings> {
 	const cur = { ...defaults, ...existing };
-	const temperature = await ui.text("Temperature", String(cur.temperature));
-	const topP = await ui.text("top_p", String(cur.topP));
-	const topK = await ui.text("top_k", String(cur.topK));
-	const minP = await ui.text("min_p", String(cur.minP));
-	const repeatPenalty = await ui.text("Repetition penalty", String(cur.repeatPenalty));
-	const seed = await ui.text("Seed (optional)", existing?.seed !== undefined ? `current: ${existing.seed}  (Enter = keep, - = clear)` : "random");
+	const temperature = await ui.text("Temperature (randomness — lower = more deterministic)", String(cur.temperature));
+	const topP = await ui.text("top_p (nucleus sampling)", String(cur.topP));
+	const topK = await ui.text("top_k (candidate pool size)", String(cur.topK));
+	const minP = await ui.text("min_p (minimum token probability)", String(cur.minP));
+	const presencePenalty = await ui.text("Presence penalty (discourages repeating topics)", String(cur.presencePenalty));
+	const frequencyPenalty = await ui.text("Frequency penalty (discourages repeating tokens)", String(cur.frequencyPenalty));
+	const repeatPenalty = await ui.text("Repetition penalty (llama.cpp repeat_penalty)", String(cur.repeatPenalty));
+	const seed = await ui.text(
+		"Seed (pins the RNG for reproducible outputs)",
+		existing?.seed !== undefined ? `current: ${existing.seed}  (Enter = keep, - = clear)` : "random",
+	);
 	const seedTrimmed = seed.trim();
 	return {
 		temperature: parseNumber(temperature) ?? cur.temperature,
 		topP: parseNumber(topP) ?? cur.topP,
 		topK: parseInt_(topK) ?? cur.topK,
 		minP: parseNumber(minP) ?? cur.minP,
+		presencePenalty: parseNumber(presencePenalty) ?? cur.presencePenalty,
+		frequencyPenalty: parseNumber(frequencyPenalty) ?? cur.frequencyPenalty,
 		repeatPenalty: parseNumber(repeatPenalty) ?? cur.repeatPenalty,
 		...(seedTrimmed === "-" ? {} : parseInt_(seedTrimmed) !== undefined ? { seed: parseInt_(seedTrimmed) } : cur.seed !== undefined ? { seed: cur.seed } : {}),
 	};

@@ -1,6 +1,6 @@
 {
   "name": "pi-unsloth",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "pi extension: first-class Unsloth Studio integration — /login setup, per-model llama.cpp settings, thinking-aware sampling",
   "license": "MIT",

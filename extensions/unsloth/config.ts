@@ -17,6 +17,8 @@ export interface SamplingSettings {
 	topP?: number;
 	topK?: number;
 	minP?: number;
+	presencePenalty?: number;
+	frequencyPenalty?: number;
 	repeatPenalty?: number;
 	seed?: number;
 }
@@ -131,6 +133,8 @@ export function buildSamplingParams(s?: SamplingSettings): Record<string, unknow
 	if (s.topP !== undefined) out.top_p = s.topP;
 	if (s.topK !== undefined) out.top_k = s.topK;
 	if (s.minP !== undefined) out.min_p = s.minP;
+	if (s.presencePenalty !== undefined) out.presence_penalty = s.presencePenalty;
+	if (s.frequencyPenalty !== undefined) out.frequency_penalty = s.frequencyPenalty;
 	if (s.repeatPenalty !== undefined) out.repetition_penalty = s.repeatPenalty;
 	if (s.seed !== undefined) out.seed = s.seed;
 	return Object.keys(out).length > 0 ? out : undefined;
