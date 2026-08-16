@@ -33,7 +33,7 @@ Appears at the top of both login categories. The wizard:
 | Action | What it does |
 |---|---|
 | Add models from server | Multi-select more models/quants, run the settings wizard for each |
-| Configure a model's settings | Re-run the settings wizard (current values shown as defaults) |
+| Configure a model's settings | Re-run the settings wizard — current values are preloaded: Enter keeps each one, "-" clears it, selects offer "Keep current" |
 | Apply settings + reload model on server | `POST /api/inference/load` with the saved settings |
 | Server status | Loaded model, thinking style/levels, widget above editor |
 | Remove a model | Removes from pi (server files untouched) |

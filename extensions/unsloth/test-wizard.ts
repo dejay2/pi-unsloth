@@ -146,4 +146,53 @@ await test("settingsWizard: 'recommended' thinking sampling preset", async () =>
 	assert.deepEqual(s.samplingThinking, { temperature: 0.6, topP: 0.95, topK: 20, minP: 0 });
 });
 
+const existingSettings = {
+	contextWindow: 65536,
+	thinking: { reasoning: true },
+	load: {
+		maxSeqLength: 65536,
+		cacheTypeKv: "q8_0",
+		speculativeType: "off",
+		specDraftNMax: 4,
+		nParallel: 2,
+		extraArgs: ["--flash-attn"],
+	},
+	sampling: { temperature: 0.3, topP: 0.9, topK: 40, minP: 0.01, repeatPenalty: 1.1, seed: 42 },
+	samplingThinking: { temperature: 0.55, topP: 0.92 },
+};
+
+await test("reconfigure: all-empty answers keep every current setting", async () => {
+	const { ui } = scripted({
+		texts: ["", "", "", "", "", "", "", "", "", ""],
+		selects: ["__keep", "__keep", "__keep"],
+	});
+	const s = await settingsWizard(ui, { id: "org/m:Q4", contextWindow: 65536 }, detected, existingSettings);
+	assert.equal(s.load?.maxSeqLength, 65536);
+	assert.equal(s.load?.cacheTypeKv, "q8_0");
+	assert.equal(s.load?.speculativeType, "off");
+	assert.equal(s.load?.specDraftNMax, 4);
+	assert.equal(s.load?.nParallel, 2);
+	assert.deepEqual(s.load?.extraArgs, ["--flash-attn"]);
+	assert.equal(s.sampling?.temperature, 0.3);
+	assert.equal(s.sampling?.seed, 42);
+	assert.deepEqual(s.samplingThinking, { temperature: 0.55, topP: 0.92 });
+});
+
+await test("reconfigure: '-' clears a value, new value replaces", async () => {
+	const { ui } = scripted({
+		texts: ["131072", "-", "-", "-", "", "", "", "", "", "-"], // ctx=131072, clear draft/parallel/extra, sampling defaults, clear seed
+		selects: ["f16", "mtp", "same"],
+	});
+	const s = await settingsWizard(ui, { id: "org/m:Q4" }, detected, existingSettings);
+	assert.equal(s.load?.maxSeqLength, 131072); // replaced
+	assert.equal(s.load?.cacheTypeKv, "f16"); // replaced via select
+	assert.equal(s.load?.speculativeType, "mtp");
+	assert.equal(s.load?.specDraftNMax, undefined); // cleared
+	assert.equal(s.load?.nParallel, undefined); // cleared
+	assert.equal(s.load?.extraArgs, undefined); // cleared
+	assert.equal(s.sampling?.temperature, 0.3); // kept
+	assert.equal(s.sampling?.seed, undefined); // cleared
+	assert.equal(s.samplingThinking, undefined); // 'same' clears thinking sampling
+});
+
 console.log(`\n${passed} tests passed${process.exitCode ? " (with failures)" : ""}`);

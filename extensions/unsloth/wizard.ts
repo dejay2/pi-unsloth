@@ -111,33 +111,67 @@ export async function settingsWizard(
 	}
 
 	// --- load-time settings ---
-	ui.progress("Load-time settings (applied when the model loads — Enter keeps server defaults)");
-	const maxSeqLength = parseInt_(
+	ui.progress("Load-time settings (applied when the model loads — Enter keeps current, '-' clears)");
+	const ctxRaw = (
 		await ui.text(
 			"Context size (tokens)",
-			existing?.load?.maxSeqLength?.toString() ??
-				(model.contextWindow ? `native: ${model.contextWindow}` : "server default"),
-		),
-	);
-	const kvChoice = await ui.select(
-		"KV cache dtype",
-		KV_TYPES.map((k) => ({ id: k, label: k })),
-	);
+			existing?.load?.maxSeqLength
+				? `current: ${existing.load.maxSeqLength}`
+				: model.contextWindow
+					? `native: ${model.contextWindow}`
+					: "server default",
+		)
+	).trim();
+	const maxSeqLength = ctxRaw === "-" ? undefined : (parseInt_(ctxRaw) ?? existing?.load?.maxSeqLength);
+
+	const kvOptions = KV_TYPES.map((k) => ({ id: k, label: k }));
+	if (existing?.load?.cacheTypeKv) {
+		kvOptions.unshift({ id: "__keep", label: `Keep current (${existing.load.cacheTypeKv})` });
+	}
+	const kvChoice = await ui.select("KV cache dtype", kvOptions);
 	if (!kvChoice) throw new Error("Cancelled");
-	const specChoice = await ui.select(
-		"Speculative decoding (MTP)",
-		SPEC_TYPES.map((s) => ({ id: s.split(" ")[0], label: s })),
-	);
+	const cacheTypeKv =
+		kvChoice === "__keep" ? existing?.load?.cacheTypeKv : kvChoice !== "server default" ? kvChoice : undefined;
+
+	const specOptions = SPEC_TYPES.map((s) => ({ id: s.split(" ")[0], label: s }));
+	if (existing?.load?.speculativeType) {
+		specOptions.unshift({ id: "__keep", label: `Keep current (${existing.load.speculativeType})` });
+	}
+	const specChoice = await ui.select("Speculative decoding (MTP)", specOptions);
 	if (!specChoice) throw new Error("Cancelled");
-	const specDraftNMax = parseInt_(await ui.text("Speculative draft tokens (1–16)", "auto"));
-	const nParallel = parseInt_(await ui.text("Parallel decode slots", "1 (default)"));
-	const extraRaw = await ui.text("Extra llama.cpp args (optional)", "e.g. --n-cpu-moe 4 --flash-attn");
-	const extraArgs = extraRaw.trim() ? extraRaw.trim().split(/\s+/) : undefined;
+	const speculativeType =
+		specChoice === "__keep" ? existing?.load?.speculativeType : specChoice !== "auto" ? specChoice : undefined;
+
+	const draftRaw = (
+		await ui.text(
+			"Speculative draft tokens (1–16)",
+			existing?.load?.specDraftNMax ? `current: ${existing.load.specDraftNMax}` : "auto",
+		)
+	).trim();
+	const specDraftNMax = draftRaw === "-" ? undefined : (parseInt_(draftRaw) ?? existing?.load?.specDraftNMax);
+
+	const parallelRaw = (
+		await ui.text(
+			"Parallel decode slots",
+			existing?.load?.nParallel ? `current: ${existing.load.nParallel}` : "1 (default)",
+		)
+	).trim();
+	const nParallel = parallelRaw === "-" ? undefined : (parseInt_(parallelRaw) ?? existing?.load?.nParallel);
+
+	const extraRaw = (
+		await ui.text(
+			"Extra llama.cpp args",
+			existing?.load?.extraArgs?.length
+				? `current: ${existing.load.extraArgs.join(" ")}`
+				: "e.g. --n-cpu-moe 4 --flash-attn",
+		)
+	).trim();
+	const extraArgs = extraRaw === "-" ? undefined : extraRaw === "" ? existing?.load?.extraArgs : extraRaw.split(/\s+/);
 
 	const load: LoadSettings = {
 		...(maxSeqLength ? { maxSeqLength } : {}),
-		...(kvChoice !== "server default" ? { cacheTypeKv: kvChoice } : {}),
-		...(specChoice !== "auto" ? { speculativeType: specChoice } : {}),
+		...(cacheTypeKv ? { cacheTypeKv } : {}),
+		...(speculativeType ? { speculativeType } : {}),
 		...(specDraftNMax ? { specDraftNMax } : {}),
 		...(nParallel ? { nParallel } : {}),
 		...(extraArgs ? { extraArgs } : {}),
@@ -156,13 +190,24 @@ export async function settingsWizard(
 	// --- thinking-conditional sampling ---
 	let samplingThinking: SamplingSettings | undefined;
 	if (thinking.reasoning && !alwaysOn) {
-		const choice = await ui.select("Different sampling while thinking?", [
+		const thinkOptions = [
+			...(existing?.samplingThinking
+				? [
+						{
+							id: "__keep",
+							label: `Keep current (temp ${existing.samplingThinking.temperature ?? "—"}, top_p ${existing.samplingThinking.topP ?? "—"}, …)`,
+						},
+					]
+				: []),
 			{ id: "same", label: "Same as normal" },
 			{ id: "recommended", label: "Qwen recommended (temp 0.6, top_p 0.95)" },
 			{ id: "custom", label: "Custom…" },
-		]);
+		];
+		const choice = await ui.select("Different sampling while thinking?", thinkOptions);
 		if (!choice) throw new Error("Cancelled");
-		if (choice === "recommended") {
+		if (choice === "__keep") {
+			samplingThinking = existing?.samplingThinking;
+		} else if (choice === "recommended") {
 			samplingThinking = { temperature: 0.6, topP: 0.95, topK: 20, minP: 0.0 };
 		} else if (choice === "custom") {
 			samplingThinking = await samplingWizard(ui, { temperature: 0.6, topP: 0.95, topK: 20, minP: 0.0 }, existing?.samplingThinking);
@@ -190,13 +235,14 @@ async function samplingWizard(
 	const topK = await ui.text("top_k", String(cur.topK));
 	const minP = await ui.text("min_p", String(cur.minP));
 	const repeatPenalty = await ui.text("Repetition penalty", String(cur.repeatPenalty));
-	const seed = await ui.text("Seed (optional)", "random");
+	const seed = await ui.text("Seed (optional)", existing?.seed !== undefined ? `current: ${existing.seed}  (Enter = keep, - = clear)` : "random");
+	const seedTrimmed = seed.trim();
 	return {
 		temperature: parseNumber(temperature) ?? cur.temperature,
 		topP: parseNumber(topP) ?? cur.topP,
 		topK: parseInt_(topK) ?? cur.topK,
 		minP: parseNumber(minP) ?? cur.minP,
 		repeatPenalty: parseNumber(repeatPenalty) ?? cur.repeatPenalty,
-		...(parseInt_(seed) !== undefined ? { seed: parseInt_(seed) } : {}),
+		...(seedTrimmed === "-" ? {} : parseInt_(seedTrimmed) !== undefined ? { seed: parseInt_(seedTrimmed) } : cur.seed !== undefined ? { seed: cur.seed } : {}),
 	};
 }
