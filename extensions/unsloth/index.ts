@@ -30,6 +30,7 @@ import {
 	buildLoadPayload,
 	buildModelEntry,
 	buildSamplingParams,
+	collectChatTemplates,
 	splitModelRef,
 	CONFIG_PATH,
 	type UnslothModelSettings,
@@ -42,6 +43,7 @@ import {
 	providerSetup,
 	pickModel,
 	settingsWizard,
+	chatTemplateWizard,
 	adaptAuthInteraction,
 	type WizardInteraction,
 } from "./wizard.ts";
@@ -115,6 +117,8 @@ async function applyLoadSettings(
 		ctx.ui.notify(`Unsloth: ${modelId} loaded`, "info");
 	} else if (res.status === 409) {
 		ctx.ui.notify(`Unsloth: load refused (server busy, 409). ${res.error ?? ""}`, "warning");
+	} else if (res.status === 422 && settings.chatTemplate) {
+		ctx.ui.notify("Unsloth: this server is too old to accept a replacement chat template. Update Unsloth Studio and try again.", "error");
 	} else {
 		ctx.ui.notify(`Unsloth: load failed — ${res.error ?? `HTTP ${res.status}`}`, "error");
 	}
@@ -137,7 +141,9 @@ async function loginFlow(pi: ExtensionAPI, ui: WizardInteraction): Promise<strin
 	const model = await pickModel(ui, models);
 	ui.progress("Detecting thinking control…");
 	const detected = await fetchUnslothReasoning(cfg);
-	const settings = await settingsWizard(ui, model, detected);
+	let settings = await settingsWizard(ui, model, detected);
+	const templates = await chatTemplateWizard(ui, undefined, [], collectChatTemplates(readConfig()));
+	settings = { ...settings, chatTemplate: templates.selected, chatTemplates: templates.history };
 
 	saveModel(pi, provider, model, settings);
 
@@ -291,7 +297,9 @@ async function cmdAddModels(pi: ExtensionAPI, ctx: ExtensionCommandContext): Pro
 	const ui = adaptUi(ctx);
 	for (const model of picked) {
 		ctx.ui.notify(`Settings for ${model.id}`, "info");
-		const settings = await settingsWizard(ui, model, detected);
+		let settings = await settingsWizard(ui, model, detected);
+		const templates = await chatTemplateWizard(ui, undefined, [], collectChatTemplates(readConfig()));
+		settings = { ...settings, chatTemplate: templates.selected, chatTemplates: templates.history };
 		saveModel(pi, provider, model, settings);
 	}
 	ctx.ui.notify(`Added ${picked.length} model(s). Load-time settings apply when you switch to each model.`, "info");
@@ -317,7 +325,15 @@ async function cmdConfigure(pi: ExtensionAPI, ctx: ExtensionCommandContext): Pro
 	ctx.ui.notify("Detecting thinking control…", "info");
 	const detected = await fetchUnslothReasoning(discoveryCfg(provider.baseUrl, provider.apiKey));
 	const model: DiscoveredModel = { id: choice, contextWindow: existing.contextWindow, maxTokens: existing.maxTokens };
-	const settings = await settingsWizard(adaptUi(ctx), model, detected, existing);
+	const ui = adaptUi(ctx);
+	let settings = await settingsWizard(ui, model, detected, existing);
+	const templates = await chatTemplateWizard(
+		ui,
+		existing.chatTemplate,
+		existing.chatTemplates ?? [],
+		collectChatTemplates(cfg),
+	);
+	settings = { ...settings, chatTemplate: templates.selected, chatTemplates: templates.history };
 	saveModel(pi, provider, model, settings);
 	ctx.ui.notify(`Saved settings for ${choice}.`, "info");
 	if (await ctx.ui.confirm("Apply on server now?", "Reload the model on the Unsloth server with these settings now?")) {
@@ -359,6 +375,7 @@ async function cmdStatus(ctx: ExtensionCommandContext): Promise<void> {
 		`Server: ${provider.baseUrl}`,
 		`Loaded: ${status.activeModel ?? "(none)"}`,
 	];
+	lines.push(`Chat template: ${status.chatTemplateOverride ? "custom replacement" : "model default"}`);
 	if (status.reasoning) {
 		lines.push(
 			`Thinking: ${status.reasoning.style}${status.reasoning.levels.length ? ` — levels: ${status.reasoning.levels.join(", ")}` : ""}`,

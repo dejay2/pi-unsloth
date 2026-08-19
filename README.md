@@ -35,10 +35,12 @@ Appears at the top of both login categories. The wizard:
 | Add models from server | Multi-select more models/quants, run the settings wizard for each |
 | Configure a model's settings | Re-run the settings wizard — current values are preloaded: Enter keeps each one, "-" clears it, selects offer "Keep current" |
 | Apply settings + reload model on server | `POST /api/inference/load` with the saved settings |
-| Server status | Loaded model, thinking style/levels, widget above editor |
+| Server status | Loaded model, active chat-template source, thinking style/levels, widget above editor |
 | Remove a model | Removes from pi (server files untouched) |
 
 ### Settings per model
+
+**Chat template** — keep the model default, reuse a template previously used with that model, browse templates saved from all models, paste one directly, or paste a Hugging Face model name/page. For Hugging Face models, the main template is shown first and alternative templates remain selectable. The choice is applied as `chat_template_override` when the model reloads.
 
 **Load-time (llama.cpp structural)** — applied via `POST /api/inference/load`
 whenever you switch to the model in pi:
@@ -77,6 +79,7 @@ extensions/unsloth/
 ├── index.ts        # /login vehicle, /unsloth command, model_select + payload hooks
 ├── wizard.ts       # settings wizard on a minimal prompt surface (login + command)
 ├── api.ts          # Unsloth HTTP client (status, models+quants, load)
+├── chat-template.ts # Hugging Face template discovery + saved-library helpers
 ├── config.ts       # unsloth.json store + payload builders
 ├── discover.ts     # /models fetching + Unsloth quant expansion
 ├── thinking.ts     # reasoning classification → pi thinking config

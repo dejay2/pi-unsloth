@@ -14,6 +14,7 @@ import {
 	buildLoadPayload,
 	buildSamplingParams,
 	buildModelEntry,
+	collectChatTemplates,
 } from "./config.ts";
 
 let passed = 0;
@@ -60,7 +61,17 @@ test("buildLoadPayload maps settings to Unsloth /load fields, omits unset", () =
 	});
 });
 
-test("buildLoadPayload with no settings sends just model_path", () => {
+test("buildLoadPayload sends the selected chat template override", () => {
+	assert.deepEqual(buildLoadPayload("org/model:Q4", {
+		chatTemplate: { id: "hf:org/source:default", name: "Source default", content: "{% for message in messages %}CHAT{% endfor %}" },
+	}), {
+		model_path: "org/model",
+		gguf_variant: "Q4",
+		chat_template_override: "{% for message in messages %}CHAT{% endfor %}",
+	});
+});
+
+test("buildLoadPayload with model default sends no template override", () => {
 	assert.deepEqual(buildLoadPayload("org/model", {}), { model_path: "org/model" });
 });
 
@@ -91,6 +102,20 @@ test("buildModelEntry includes thinking compat, level map, samplingParams", () =
 	assert.equal(e.contextWindow, 64000);
 	assert.equal(e.compat.thinkingFormat, "qwen-chat-template");
 	assert.deepEqual(e.samplingParams, { temperature: 0.7, top_p: 0.8 });
+});
+
+test("collectChatTemplates builds a reusable library across models without duplicates", () => {
+	const shared = { id: "shared", name: "Shared", content: "SHARED" };
+	const other = { id: "other", name: "Other", content: "OTHER" };
+	const templates = collectChatTemplates({ providers: { unsloth: {
+		baseUrl: "http://x/v1",
+		apiKey: "k",
+		models: {
+			a: { chatTemplate: shared, chatTemplates: [shared] },
+			b: { chatTemplate: other, chatTemplates: [shared, other] },
+		},
+	} } });
+	assert.deepEqual(templates, [shared, other]);
 });
 
 test("config store: round-trip, upsert, remove", () => {

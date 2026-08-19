@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { ThinkingConfig } from "./thinking.ts";
+import { mergeTemplateLibrary, type ChatTemplate } from "./chat-template.ts";
 
 export const CONFIG_PATH = join(homedir(), ".pi", "agent", "unsloth.json");
 
@@ -37,6 +38,10 @@ export interface LoadSettings {
 
 export interface UnslothModelSettings {
 	contextWindow?: number;
+	/** Active replacement. Undefined means use the template built into the model. */
+	chatTemplate?: ChatTemplate;
+	/** Templates previously selected for this model, offered on reconfiguration. */
+	chatTemplates?: ChatTemplate[];
 	maxTokens?: number;
 	thinking?: ThinkingConfig;
 	load?: LoadSettings;
@@ -97,6 +102,18 @@ export function removeModel(data: UnslothConfig, providerId: string, modelId: st
 	return true;
 }
 
+/** Build the reusable template library from every configured model. */
+export function collectChatTemplates(data: UnslothConfig): ChatTemplate[] {
+	const groups: ChatTemplate[][] = [];
+	for (const provider of Object.values(data.providers)) {
+		for (const settings of Object.values(provider.models)) {
+			groups.push(settings.chatTemplates ?? []);
+			if (settings.chatTemplate) groups.push([settings.chatTemplate]);
+		}
+	}
+	return mergeTemplateLibrary(...groups);
+}
+
 // ---------------------------------------------------------------------------
 // Payload builders
 // ---------------------------------------------------------------------------
@@ -114,6 +131,7 @@ export function buildLoadPayload(modelId: string, s: UnslothModelSettings): Reco
 	const load = s.load ?? {};
 	const payload: Record<string, unknown> = { model_path: modelPath };
 	if (variant) payload.gguf_variant = variant;
+	if (s.chatTemplate?.content) payload.chat_template_override = s.chatTemplate.content;
 	if (load.maxSeqLength) payload.max_seq_length = load.maxSeqLength;
 	if (load.cacheTypeKv) payload.cache_type_kv = load.cacheTypeKv;
 	if (load.speculativeType) payload.speculative_type = load.speculativeType;

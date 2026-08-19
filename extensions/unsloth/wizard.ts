@@ -4,10 +4,12 @@
  * /unsloth command (ctx.ui). No pi imports — unit-testable (test-wizard.ts).
  */
 
+import { createHash } from "node:crypto";
 import type { ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import type { LoadSettings, SamplingSettings, UnslothModelSettings } from "./config.ts";
 import type { DiscoveredModel } from "./discover.ts";
 import { matchesActiveModel, thinkingConfigFor, type ReasoningInfo } from "./thinking.ts";
+import { fetchHuggingFaceTemplates, mergeTemplateLibrary, type ChatTemplate } from "./chat-template.ts";
 
 /** Minimal prompt surface — implemented by pi's login UI or ctx.ui. */
 export interface WizardInteraction {
@@ -78,6 +80,64 @@ export async function pickModel(ui: WizardInteraction, models: DiscoveredModel[]
 	const model = models.find((m) => m.id === choice);
 	if (!model) throw new Error("Model not found");
 	return model;
+}
+
+export async function chatTemplateWizard(
+	ui: WizardInteraction,
+	current: ChatTemplate | undefined,
+	modelHistory: ChatTemplate[],
+	allTemplates: ChatTemplate[],
+	fetchFromHuggingFace: (model: string) => Promise<ChatTemplate[]> = fetchHuggingFaceTemplates,
+): Promise<{ selected?: ChatTemplate; history: ChatTemplate[] }> {
+	const own = mergeTemplateLibrary(modelHistory, current ? [current] : []);
+	const options = [
+		{ id: "__default", label: "Model default (no replacement)" },
+		...(current ? [{ id: current.id, label: `Current: ${current.name}` }] : []),
+		...own.filter((t) => t.id !== current?.id).map((t) => ({ id: t.id, label: t.name })),
+		{ id: "__browse", label: "Browse all saved templates…" },
+		{ id: "__huggingface", label: "Get from Hugging Face…" },
+		{ id: "__paste", label: "Paste a template directly…" },
+	];
+	const choice = await ui.select("Chat template", options);
+	if (!choice) throw new Error("Cancelled");
+	if (choice === "__default") return { selected: undefined, history: own };
+	const direct = own.find((t) => t.id === choice);
+	if (direct) return { selected: direct, history: own };
+
+	if (choice === "__browse") {
+		const library = mergeTemplateLibrary(allTemplates);
+		if (library.length === 0) throw new Error("No saved templates yet");
+		const picked = await ui.select("Saved templates", library.map((t) => ({ id: t.id, label: t.name })));
+		if (!picked) throw new Error("Cancelled");
+		const selected = library.find((t) => t.id === picked);
+		if (!selected) throw new Error("Template not found");
+		return { selected, history: mergeTemplateLibrary(own, [selected]) };
+	}
+
+	if (choice === "__huggingface") {
+		const model = await ui.text("Hugging Face model or page address", "owner/model");
+		ui.progress("Reading chat templates from Hugging Face…");
+		const fetched = await fetchFromHuggingFace(model);
+		const defaultTemplate = fetched.find((t) => t.isDefault) ?? fetched[0];
+		let selected = defaultTemplate;
+		if (fetched.length > 1) {
+			const picked = await ui.select(
+				"Template from Hugging Face (main template shown first)",
+				fetched.map((t) => ({ id: t.id, label: `${t.isDefault ? "Main — " : ""}${t.name}` })),
+			);
+			if (!picked) throw new Error("Cancelled");
+			selected = fetched.find((t) => t.id === picked) ?? defaultTemplate;
+		}
+		return { selected, history: mergeTemplateLibrary(own, fetched) };
+	}
+
+	const name = (await ui.text("Template name", "e.g. Qwen tools template")).trim();
+	const content = (await ui.text("Paste the complete Jinja chat template")).trim();
+	if (!name) throw new Error("Template name is required");
+	if (!content) throw new Error("Chat template cannot be empty");
+	const id = `pasted:${createHash("sha256").update(content).digest("hex").slice(0, 16)}`;
+	const selected: ChatTemplate = { id, name, content };
+	return { selected, history: mergeTemplateLibrary(own, [selected]) };
 }
 
 const KV_TYPES = ["server default", "f16", "bf16", "q8_0", "q4_0", "iq4_nl"];

@@ -43,6 +43,8 @@ await test("status, model list (with quant expansion), and load round-trip", asy
 					reasoning_style: "enable_thinking",
 					reasoning_effort_levels: [],
 					reasoning_always_on: false,
+					chat_template: "BUILT_IN",
+					chat_template_override: "CUSTOM",
 				}));
 			} else if (u.pathname === "/v1/models") {
 				res.writeHead(200, { "content-type": "application/json" });
@@ -72,6 +74,8 @@ await test("status, model list (with quant expansion), and load round-trip", asy
 	const status = await fetchStatus(cfg);
 	assert.equal(status?.activeModel, "org/m");
 	assert.equal(status?.reasoning?.style, "enable_thinking");
+	assert.equal(status?.chatTemplate, "BUILT_IN");
+	assert.equal(status?.chatTemplateOverride, "CUSTOM");
 	assert.equal(lastAuth, "Bearer sk-u");
 
 	// model list with per-quant expansion

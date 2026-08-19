@@ -8,6 +8,8 @@ import { fetchUnslothReasoning, type ReasoningInfo } from "./thinking.ts";
 export interface UnslothStatus {
 	activeModel?: string;
 	loaded: string[];
+	chatTemplate?: string;
+	chatTemplateOverride?: string;
 	reasoning: ReasoningInfo | null;
 	raw: Record<string, unknown>;
 }
@@ -25,6 +27,8 @@ export async function fetchStatus(cfg: DiscoveryConfig, timeoutMs = 8_000): Prom
 		return {
 			activeModel: typeof raw.active_model === "string" ? raw.active_model : undefined,
 			loaded: Array.isArray(raw.loaded) ? raw.loaded.filter((x): x is string => typeof x === "string") : [],
+			...(typeof raw.chat_template === "string" ? { chatTemplate: raw.chat_template } : {}),
+			...(typeof raw.chat_template_override === "string" ? { chatTemplateOverride: raw.chat_template_override } : {}),
 			reasoning,
 			raw,
 		};

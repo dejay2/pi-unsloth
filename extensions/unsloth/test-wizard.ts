@@ -9,6 +9,7 @@ import {
 	providerSetup,
 	pickModel,
 	settingsWizard,
+	chatTemplateWizard,
 	type WizardInteraction,
 } from "./wizard.ts";
 import type { ReasoningInfo } from "./thinking.ts";
@@ -78,6 +79,47 @@ await test("pickModel returns the chosen model", async () => {
 	const { ui } = scripted({ selects: ["a:Q4"] });
 	const m = await pickModel(ui, [{ id: "a:Q4" }, { id: "a:Q8" }]);
 	assert.equal(m.id, "a:Q4");
+});
+
+await test("chat template: model default clears the current replacement but keeps history", async () => {
+	const old = { id: "old", name: "Old template", content: "OLD" };
+	const { ui } = scripted({ selects: ["__default"] });
+	const result = await chatTemplateWizard(ui, old, [old], [old]);
+	assert.equal(result.selected, undefined);
+	assert.deepEqual(result.history, [old]);
+});
+
+await test("chat template: current model templates are offered directly", async () => {
+	const one = { id: "one", name: "Template one", content: "ONE" };
+	const two = { id: "two", name: "Template two", content: "TWO" };
+	const { ui } = scripted({ selects: ["two"] });
+	const result = await chatTemplateWizard(ui, one, [one, two], [one, two]);
+	assert.deepEqual(result.selected, two);
+});
+
+await test("chat template: all-model library can be browsed and adds the choice to model history", async () => {
+	const shared = { id: "shared", name: "Shared template", content: "SHARED" };
+	const { ui } = scripted({ selects: ["__browse", "shared"] });
+	const result = await chatTemplateWizard(ui, undefined, [], [shared]);
+	assert.deepEqual(result.selected, shared);
+	assert.deepEqual(result.history, [shared]);
+});
+
+await test("chat template: Hugging Face preselects default and allows an alternative", async () => {
+	const normal = { id: "hf:org/m:default", name: "org/m — default", content: "NORMAL", isDefault: true };
+	const tools = { id: "hf:org/m:tool_use", name: "org/m — tool_use", content: "TOOLS", isDefault: false };
+	const { ui } = scripted({ texts: ["https://huggingface.co/org/m"], selects: ["__huggingface", tools.id] });
+	const result = await chatTemplateWizard(ui, undefined, [], [], async () => [normal, tools]);
+	assert.deepEqual(result.selected, tools);
+	assert.deepEqual(result.history, [normal, tools]);
+});
+
+await test("chat template: pasted text is named, saved, and selected", async () => {
+	const { ui } = scripted({ texts: ["My template", "{% for message in messages %}X{% endfor %}"], selects: ["__paste"] });
+	const result = await chatTemplateWizard(ui, undefined, [], []);
+	assert.equal(result.selected?.name, "My template");
+	assert.equal(result.selected?.content, "{% for message in messages %}X{% endfor %}");
+	assert.deepEqual(result.history, [result.selected]);
 });
 
 const detected: ReasoningInfo = {

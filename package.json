@@ -19,6 +19,6 @@
     "extensions": ["./extensions/unsloth/index.ts"]
   },
   "scripts": {
-    "test": "node extensions/unsloth/test-config.ts && node extensions/unsloth/test-wizard.ts && node extensions/unsloth/test-api.ts && node extensions/unsloth/test-wiring.ts"
+    "test": "node extensions/unsloth/test-chat-template.ts && node extensions/unsloth/test-config.ts && node extensions/unsloth/test-wizard.ts && node extensions/unsloth/test-api.ts && node extensions/unsloth/test-wiring.ts"
   }
 }
