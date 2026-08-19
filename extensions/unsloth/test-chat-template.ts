@@ -55,6 +55,38 @@ await test("fetches a template dictionary and marks the named default", async ()
 	]);
 });
 
+await test("follows a GGUF model's base-model link when tokenizer_config is absent", async () => {
+	const requested: string[] = [];
+	const templates = await fetchHuggingFaceTemplates("quant/model-GGUF", async (url) => {
+		const value = String(url);
+		requested.push(value);
+		if (value.endsWith("/quant/model-GGUF/resolve/main/tokenizer_config.json")) return new Response("missing", { status: 404 });
+		if (value === "https://huggingface.co/api/models/quant/model-GGUF") return new Response(JSON.stringify({
+			cardData: { base_model: "original/model" },
+			siblings: [{ rfilename: "weights.gguf" }],
+		}), { status: 200 });
+		if (value.endsWith("/original/model/resolve/main/tokenizer_config.json")) return new Response(JSON.stringify({ chat_template: "PARENT" }), { status: 200 });
+		return new Response("missing", { status: 404 });
+	});
+	assert.equal(templates[0].content, "PARENT");
+	assert.equal(templates[0].source, "https://huggingface.co/original/model");
+	assert.ok(requested.includes("https://huggingface.co/api/models/quant/model-GGUF"));
+});
+
+await test("reads a separate chat_template.jinja file", async () => {
+	const templates = await fetchHuggingFaceTemplates("org/model", async (url) => {
+		const value = String(url);
+		if (value.endsWith("tokenizer_config.json")) return new Response(JSON.stringify({}), { status: 200 });
+		if (value === "https://huggingface.co/api/models/org/model") return new Response(JSON.stringify({
+			siblings: [{ rfilename: "chat_template.jinja" }],
+		}), { status: 200 });
+		if (value.endsWith("chat_template.jinja")) return new Response("SEPARATE_JINJA", { status: 200 });
+		return new Response("missing", { status: 404 });
+	});
+	assert.equal(templates[0].content, "SEPARATE_JINJA");
+	assert.equal(templates[0].name, "org/model — chat_template");
+});
+
 await test("reports missing, private, and malformed Hugging Face templates", async () => {
 	await assert.rejects(
 		() => fetchHuggingFaceTemplates("org/private", async () => new Response("no", { status: 401 })),
