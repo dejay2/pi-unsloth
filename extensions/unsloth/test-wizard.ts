@@ -173,8 +173,8 @@ await test("settingsWizard: full answers flow into all settings groups", async (
 	assert.ok(progress.some((p) => p.includes("enable_thinking_effort")));
 });
 
-await test("settingsWizard: DFlash plus n-gram cache saves the helper and depth", async () => {
-	const { ui } = scripted({
+await test("settingsWizard: DFlash warns that Qwen3.8 DFlash2 needs the special llama.cpp build", async () => {
+	const { ui, progress } = scripted({
 		texts: [
 			"", // context
 			"5", // DFlash depth
@@ -194,6 +194,10 @@ await test("settingsWizard: DFlash plus n-gram cache saves the helper and depth"
 		},
 		ngram: { kind: "cache" },
 	});
+	const warning = progress.find((message) => message.includes("PR #27342"));
+	assert.ok(warning);
+	assert.match(warning, /normal llama\.cpp/i);
+	assert.match(warning, /github\.com\/ggml-org\/llama\.cpp\/pull\/27342/);
 });
 
 await test("settingsWizard: parallel one skips the shared-context question", async () => {

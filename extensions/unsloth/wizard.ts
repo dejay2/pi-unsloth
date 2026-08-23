@@ -245,6 +245,7 @@ async function speculationWizard(ui: WizardInteraction, existing?: LoadSettings)
 	} else if (draftChoice === "mtp") {
 		draft = { kind: "mtp", ...(depth ? { depth } : {}) };
 	} else if (draftChoice === "dflash") {
+		ui.progress("Warning: Qwen3.8 DFlash2 is not supported by normal llama.cpp yet. Use a llama.cpp build from PR #27342: https://github.com/ggml-org/llama.cpp/pull/27342");
 		const currentSource = current.draft.kind === "dflash" ? current.draft.source : undefined;
 		const sourceChoice = await ui.select("DFlash helper location", [
 			...(currentSource ? [{ id: "__keep", label: `Keep current (${currentSource.kind})` }] : []),
