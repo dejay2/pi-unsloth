@@ -4,7 +4,15 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { fetchStatus, listModels, loadModel } from "./api.ts";
+import {
+	fetchStatus,
+	listModels,
+	loadModel,
+	saveModelOverride,
+	saveLastLocalModel,
+	fetchAutoSwitch,
+	setAutoSwitch,
+} from "./api.ts";
 
 let passed = 0;
 async function test(name: string, fn: () => Promise<void>) {
@@ -21,6 +29,9 @@ async function test(name: string, fn: () => Promise<void>) {
 
 let server: Server;
 let lastLoadBody: any;
+let lastOverrideBody: any;
+let lastLocalModelBody: any;
+let lastAutoSwitchBody: any;
 let lastAuth: string | undefined;
 
 function cfgFor(port: number) {
@@ -45,6 +56,7 @@ await test("status, model list (with quant expansion), and load round-trip", asy
 					reasoning_always_on: false,
 					chat_template: "BUILT_IN",
 					chat_template_override: "CUSTOM",
+					spec_fallback_reason: "runtime_error",
 				}));
 			} else if (u.pathname === "/v1/models") {
 				res.writeHead(200, { "content-type": "application/json" });
@@ -61,6 +73,21 @@ await test("status, model list (with quant expansion), and load round-trip", asy
 				lastLoadBody = JSON.parse(body);
 				res.writeHead(200, { "content-type": "application/json" });
 				res.end("{}");
+			} else if (u.pathname === "/api/settings/openai-auto-switch/overrides" && req.method === "PUT") {
+				lastOverrideBody = JSON.parse(body);
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ overrides: { [lastOverrideBody.model_id]: lastOverrideBody } }));
+			} else if (u.pathname === "/api/settings/last-local-model" && req.method === "PUT") {
+				lastLocalModelBody = JSON.parse(body);
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify(lastLocalModelBody));
+			} else if (u.pathname === "/api/settings/openai-auto-switch" && req.method === "GET") {
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ enabled: true, auto_unload_idle_seconds: 600, auto_download_model: false }));
+			} else if (u.pathname === "/api/settings/openai-auto-switch" && req.method === "PUT") {
+				lastAutoSwitchBody = JSON.parse(body);
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify(lastAutoSwitchBody));
 			} else {
 				res.writeHead(404).end();
 			}
@@ -76,6 +103,7 @@ await test("status, model list (with quant expansion), and load round-trip", asy
 	assert.equal(status?.reasoning?.style, "enable_thinking");
 	assert.equal(status?.chatTemplate, "BUILT_IN");
 	assert.equal(status?.chatTemplateOverride, "CUSTOM");
+	assert.equal(status?.specFallbackReason, "runtime_error");
 	assert.equal(lastAuth, "Bearer sk-u");
 
 	// model list with per-quant expansion
@@ -87,6 +115,39 @@ await test("status, model list (with quant expansion), and load round-trip", asy
 	const res = await loadModel(cfg, { model_path: "org/m", gguf_variant: "Q8", speculative_type: "off" });
 	assert.equal(res.ok, true);
 	assert.deepEqual(lastLoadBody, { model_path: "org/m", gguf_variant: "Q8", speculative_type: "off" });
+
+	const override = await saveModelOverride(cfg, "org/m:Q8", {
+		load: { nParallel: 2, nBatch: 4096 },
+	});
+	assert.equal(override.ok, true);
+	assert.deepEqual(lastOverrideBody, {
+		model_id: "org/m:Q8",
+		remove: false,
+		llama_extra_args: [],
+		n_parallel: 2,
+		n_batch: 4096,
+	});
+	assert.equal(lastAuth, "Bearer sk-u");
+
+	const savedDefault = await saveLastLocalModel(cfg, "org/m:Q8", 123456789);
+	assert.equal(savedDefault.ok, true);
+	assert.deepEqual(lastLocalModelBody, {
+		id: "org/m",
+		kind: "gguf",
+		gguf_variant: "Q8",
+		loaded_at: 123456789,
+		client_now: 123456789,
+	});
+
+	const autoSwitch = await fetchAutoSwitch(cfg);
+	assert.equal(autoSwitch?.enabled, true);
+	const changedAutoSwitch = await setAutoSwitch(cfg, false);
+	assert.equal(changedAutoSwitch.ok, true);
+	assert.deepEqual(lastAutoSwitchBody, {
+		enabled: false,
+		auto_unload_idle_seconds: 600,
+		auto_download_model: false,
+	});
 
 	await new Promise<void>((r) => server.close(() => r()));
 });

@@ -63,5 +63,13 @@ for (const [file, code] of localModules) {
 	}
 }
 
+const indexCode = localModules.get("./index.ts");
+if (indexCode) {
+	check("model restore reapplies the default without first loading an old non-default", () => {
+		assert.match(indexCode, /event\.source === "restore"[\s\S]*?provider\?\.defaultModelId[\s\S]*?event\.model\.id !== provider\.defaultModelId/);
+		assert.match(indexCode, /pi\.on\("session_start", async \(_event, ctx\) => \{[\s\S]*?ctx\.model/);
+	});
+}
+
 console.log(`\n${passed} checks passed${failed ? `, ${failed} FAILED` : ""}`);
 if (failed) process.exitCode = 1;

@@ -35,7 +35,9 @@ Appears at the top of both login categories. The wizard:
 | Add models from server | Multi-select more models/quants, run the settings wizard for each |
 | Configure a model's settings | Re-run the settings wizard — current values are preloaded: Enter keeps each one, "-" clears it, selects offer "Keep current" |
 | Apply settings + reload model on server | `POST /api/inference/load` with the saved settings |
-| Server status | Loaded model, active chat-template source, thinking style/levels, widget above editor |
+| Set default model | Restores it when pi starts and records it as Unsloth Studio's remembered model |
+| Automatic model switching | Turns Unsloth's request-driven model switching on or off without losing its other settings |
+| Server status | Loaded/default model, DFlash depth, n-gram method, chat-template source, and thinking style |
 | Remove a model | Removes from pi (server files untouched) |
 
 ### Settings per model
@@ -44,8 +46,10 @@ Appears at the top of both login categories. The wizard:
 
 **Load-time (llama.cpp structural)** — applied via `POST /api/inference/load`
 whenever you switch to the model in pi:
-context size, KV cache dtype, speculative decoding (MTP auto/off/mtp/ngram),
-draft tokens, parallel slots, raw extra llama.cpp args.
+context size, KV cache dtype, draft method (Auto, Off, MTP, or DFlash),
+DFlash helper model or server file, draft depth, an optional n-gram helper
+(Cache, Mod, Simple, Map, or Map-4), n-gram tuning, parallel slots, and raw
+extra llama.cpp args. Draft and n-gram methods can run together.
 
 **Sampling (always applied)** — written to `models.json` `samplingParams`:
 temperature, top_p, top_k, min_p, presence penalty, frequency penalty, repetition penalty, seed (pins the RNG for reproducible outputs).

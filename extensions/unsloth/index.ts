@@ -5,8 +5,8 @@
  * auth categories). The wizard asks for the server URL + API key, discovers
  * models (all downloaded quants), lets you pick one, then configures:
  *   - thinking control (auto-detected from Unsloth's template classification)
- *   - load-time llama.cpp settings (context, KV dtype, MTP/speculative,
- *     parallel slots, extra args) — applied via POST /api/inference/load
+ *   - load-time llama.cpp settings (context, KV dtype, MTP or DFlash,
+ *     optional n-gram help, parallel slots, extra args) — applied via POST /api/inference/load
  *     whenever you switch to the model in pi
  *   - sampling (temperature/top_p/top_k/min_p/repeat penalty/seed) — written
  *     to models.json samplingParams
@@ -14,7 +14,8 @@
  *     before_provider_request hook when pi's thinking level is not "off"
  *
  * /unsloth: manage everything afterwards — add models (multi-select),
- * reconfigure, apply settings now, server status, remove.
+ * reconfigure, apply settings now, set a default, control automatic switching,
+ * inspect server status, and remove models.
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -27,6 +28,9 @@ import {
 	writeConfig,
 	upsertModel,
 	removeModel as removeModelFromConfig,
+	setDefaultModel,
+	startupModelId,
+	findConfiguredModelId,
 	buildLoadPayload,
 	buildModelEntry,
 	buildSamplingParams,
@@ -36,7 +40,15 @@ import {
 	type UnslothModelSettings,
 	type SamplingSettings,
 } from "./config.ts";
-import { fetchStatus, listModels, loadModel } from "./api.ts";
+import {
+	fetchStatus,
+	listModels,
+	loadModel,
+	saveModelOverride,
+	saveLastLocalModel,
+	fetchAutoSwitch,
+	setAutoSwitch,
+} from "./api.ts";
 import { resolveApiKey, type DiscoveredModel } from "./discover.ts";
 import { fetchUnslothReasoning, type ReasoningInfo } from "./thinking.ts";
 import {
@@ -89,6 +101,8 @@ function saveModel(
 ): void {
 	const cfg = readConfig(configPath);
 	upsertModel(cfg, PROVIDER_ID, provider, model.id, settings);
+	const providerConfig = cfg.providers[PROVIDER_ID];
+	if (!providerConfig.defaultModelId) setDefaultModel(cfg, PROVIDER_ID, model.id);
 	writeConfig(cfg, configPath);
 
 	const data = readModelsJson();
@@ -103,6 +117,37 @@ function saveModel(
 	registerProviderFromFile(pi, PROVIDER_ID, data);
 }
 
+/** Mirror load-time settings into Unsloth's per-model override store. */
+async function mirrorModelSettings(
+	provider: { baseUrl: string; apiKey: string },
+	modelId: string,
+	settings: UnslothModelSettings,
+	notify: (message: string) => void,
+): Promise<void> {
+	const result = await saveModelOverride(discoveryCfg(provider.baseUrl, provider.apiKey), modelId, settings);
+	if (result.ok) return;
+	const reason = result.status === 404
+		? "this Unsloth server does not support saved per-model settings"
+		: result.error ?? `HTTP ${result.status}`;
+	notify(`Unsloth: could not save server settings (${reason}). Pi will still apply them when it loads the model.`);
+}
+
+/** Save locally and mirror load-time settings into Unsloth's per-model override store. */
+async function saveModelAndMirror(
+	pi: ExtensionAPI,
+	provider: { baseUrl: string; apiKey: string },
+	model: DiscoveredModel,
+	settings: UnslothModelSettings,
+	notify: (message: string) => void,
+): Promise<void> {
+	saveModel(pi, provider, model, settings);
+	await mirrorModelSettings(provider, model.id, settings, notify);
+	if (readConfig().providers[PROVIDER_ID]?.defaultModelId === model.id) {
+		const remembered = await saveLastLocalModel(discoveryCfg(provider.baseUrl, provider.apiKey), model.id);
+		if (!remembered.ok) notify(`Unsloth could not remember the default model (${remembered.error ?? `HTTP ${remembered.status}`}).`);
+	}
+}
+
 /** Apply load-time settings on the server (fire-and-forget with notifies). */
 async function applyLoadSettings(
 	ctx: ExtensionContext,
@@ -110,10 +155,17 @@ async function applyLoadSettings(
 	modelId: string,
 	settings: UnslothModelSettings,
 ): Promise<void> {
+	await mirrorModelSettings(provider, modelId, settings, (message) => ctx.ui.notify(message, "warning"));
 	const payload = buildLoadPayload(modelId, settings);
+	const serverCfg = discoveryCfg(provider.baseUrl, provider.apiKey);
 	ctx.ui.notify(`Unsloth: loading ${modelId} with configured settings…`, "info");
-	const res = await loadModel(discoveryCfg(provider.baseUrl, provider.apiKey), payload);
+	const res = await loadModel(serverCfg, payload);
 	if (res.ok) {
+		const status = await fetchStatus(serverCfg);
+		if (status?.specFallbackReason) {
+			ctx.ui.notify(`Unsloth loaded the main model without the requested draft helper (${status.specFallbackReason}). Check the helper model or file location.`, "error");
+			return;
+		}
 		ctx.ui.notify(`Unsloth: ${modelId} loaded`, "info");
 	} else if (res.status === 409) {
 		ctx.ui.notify(`Unsloth: load refused (server busy, 409). ${res.error ?? ""}`, "warning");
@@ -145,13 +197,18 @@ async function loginFlow(pi: ExtensionAPI, ui: WizardInteraction): Promise<strin
 	const templates = await chatTemplateWizard(ui, undefined, [], collectChatTemplates(readConfig()));
 	settings = { ...settings, chatTemplate: templates.selected, chatTemplates: templates.history };
 
-	saveModel(pi, provider, model, settings);
+	await saveModelAndMirror(pi, provider, model, settings, (message) => ui.progress(message));
 
 	// Apply load-time settings immediately so the server matches the config.
 	const payload = buildLoadPayload(model.id, settings);
 	ui.progress("Applying load-time settings on the server…");
 	const res = await loadModel(cfg, payload);
-	if (!res.ok) ui.progress(`Note: load returned ${res.error ?? `HTTP ${res.status}`} — settings apply on next switch.`);
+	if (!res.ok) {
+		ui.progress(`Note: load returned ${res.error ?? `HTTP ${res.status}`} — settings apply on next switch.`);
+	} else {
+		const status = await fetchStatus(cfg);
+		if (status?.specFallbackReason) ui.progress(`The main model loaded without the requested draft helper (${status.specFallbackReason}). Check its model or file location.`);
+	}
 
 	// Best-effort: switch to the new model.
 	try {
@@ -300,7 +357,7 @@ async function cmdAddModels(pi: ExtensionAPI, ctx: ExtensionCommandContext): Pro
 		let settings = await settingsWizard(ui, model, detected);
 		const templates = await chatTemplateWizard(ui, undefined, [], collectChatTemplates(readConfig()));
 		settings = { ...settings, chatTemplate: templates.selected, chatTemplates: templates.history };
-		saveModel(pi, provider, model, settings);
+		await saveModelAndMirror(pi, provider, model, settings, (message) => ctx.ui.notify(message, "warning"));
 	}
 	ctx.ui.notify(`Added ${picked.length} model(s). Load-time settings apply when you switch to each model.`, "info");
 	await offerSwitch(pi, ctx, picked[0].id);
@@ -334,7 +391,7 @@ async function cmdConfigure(pi: ExtensionAPI, ctx: ExtensionCommandContext): Pro
 		collectChatTemplates(cfg),
 	);
 	settings = { ...settings, chatTemplate: templates.selected, chatTemplates: templates.history };
-	saveModel(pi, provider, model, settings);
+	await saveModelAndMirror(pi, provider, model, settings, (message) => ctx.ui.notify(message, "warning"));
 	ctx.ui.notify(`Saved settings for ${choice}.`, "info");
 	if (await ctx.ui.confirm("Apply on server now?", "Reload the model on the Unsloth server with these settings now?")) {
 		await applyLoadSettings(ctx, provider, choice, settings);
@@ -360,6 +417,56 @@ async function cmdApplyNow(ctx: ExtensionCommandContext): Promise<void> {
 	await applyLoadSettings(ctx, provider, choice, cfg.providers[PROVIDER_ID].models[choice]);
 }
 
+async function cmdSetDefault(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+	const cfg = readConfig();
+	const provider = cfg.providers[PROVIDER_ID];
+	const modelIds = Object.keys(provider?.models ?? {});
+	if (!provider || modelIds.length === 0) {
+		ctx.ui.notify("No configured models.", "warning");
+		return;
+	}
+	const choice = await ctx.ui.select("Use which model by default?", modelIds);
+	if (!choice) return;
+	if (!setDefaultModel(cfg, PROVIDER_ID, choice)) {
+		ctx.ui.notify("That model is not configured.", "error");
+		return;
+	}
+	writeConfig(cfg);
+	const remembered = await saveLastLocalModel(discoveryCfg(provider.baseUrl, provider.apiKey), choice);
+	if (!remembered.ok) {
+		ctx.ui.notify(`Saved as Pi's default, but Unsloth could not remember it — ${remembered.error ?? `HTTP ${remembered.status}`}`, "warning");
+		return;
+	}
+	ctx.ui.notify(`${choice} is now the default model for Pi and Unsloth Studio.`, "info");
+	const model = ctx.modelRegistry.find(PROVIDER_ID, choice);
+	if (model && ctx.model?.id !== choice) await pi.setModel(model);
+}
+
+async function cmdAutoSwitch(ctx: ExtensionCommandContext): Promise<void> {
+	const provider = getProvider(ctx);
+	if (!provider) {
+		ctx.ui.notify("No Unsloth server configured.", "error");
+		return;
+	}
+	const serverCfg = discoveryCfg(provider.baseUrl, provider.apiKey);
+	const current = await fetchAutoSwitch(serverCfg);
+	if (!current) {
+		ctx.ui.notify("Could not read Unsloth's automatic model switching setting.", "error");
+		return;
+	}
+	const choice = await ctx.ui.select(`Automatic model switching is ${current.enabled ? "on" : "off"}`, [
+		"Turn on",
+		"Turn off",
+	]);
+	if (!choice) return;
+	const enabled = choice === "Turn on";
+	const result = await setAutoSwitch(serverCfg, enabled);
+	ctx.ui.notify(
+		result.ok ? `Automatic model switching is now ${enabled ? "on" : "off"}.` : `Could not change the setting — ${result.error ?? `HTTP ${result.status}`}`,
+		result.ok ? "info" : "error",
+	);
+}
+
 async function cmdStatus(ctx: ExtensionCommandContext): Promise<void> {
 	const provider = getProvider(ctx);
 	if (!provider) {
@@ -371,17 +478,28 @@ async function cmdStatus(ctx: ExtensionCommandContext): Promise<void> {
 		ctx.ui.notify("Could not reach the server.", "error");
 		return;
 	}
+	const providerConfig = readConfig().providers[PROVIDER_ID];
+	const activeModelId = findConfiguredModelId(providerConfig, status.activeModel);
+	const activeSettings = activeModelId ? providerConfig?.models[activeModelId] : undefined;
+	const speculation = activeSettings?.load?.speculation;
 	const lines = [
 		`Server: ${provider.baseUrl}`,
 		`Loaded: ${status.activeModel ?? "(none)"}`,
+		`Default: ${providerConfig?.defaultModelId ?? "(none)"}`,
 	];
+	if (speculation) {
+		const depth = "depth" in speculation.draft ? speculation.draft.depth : undefined;
+		lines.push(`Draft: ${speculation.draft.kind}${depth ? ` — depth ${depth}` : ""}`);
+		lines.push(`N-gram: ${speculation.ngram.kind}`);
+	}
+	if (status.specFallbackReason) lines.push(`Draft fallback: ${status.specFallbackReason}`);
 	lines.push(`Chat template: ${status.chatTemplateOverride ? "custom replacement" : "model default"}`);
 	if (status.reasoning) {
 		lines.push(
 			`Thinking: ${status.reasoning.style}${status.reasoning.levels.length ? ` — levels: ${status.reasoning.levels.join(", ")}` : ""}`,
 		);
 	}
-	const configured = Object.keys(readConfig().providers[PROVIDER_ID]?.models ?? {});
+	const configured = Object.keys(providerConfig?.models ?? {});
 	lines.push(`Configured in pi: ${configured.length} model(s)`);
 	ctx.ui.setWidget("unsloth-status", lines);
 }
@@ -429,7 +547,7 @@ export default function (pi: ExtensionAPI) {
 	registerLoginVehicle(pi);
 
 	pi.registerCommand("unsloth", {
-		description: "Manage Unsloth server models & settings (add/configure/apply/status/remove)",
+		description: "Manage Unsloth models, DFlash, defaults, and server settings",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("/unsloth needs an interactive UI.", "error");
@@ -439,6 +557,8 @@ export default function (pi: ExtensionAPI) {
 				"Add models from server",
 				"Configure a model's settings",
 				"Apply settings + reload model on server",
+				"Set default model",
+				"Automatic model switching",
 				"Server status",
 				"Remove a model",
 			]);
@@ -446,6 +566,8 @@ export default function (pi: ExtensionAPI) {
 			if (action.startsWith("Add")) await cmdAddModels(pi, ctx);
 			else if (action.startsWith("Configure")) await cmdConfigure(pi, ctx);
 			else if (action.startsWith("Apply")) await cmdApplyNow(ctx);
+			else if (action.startsWith("Set default")) await cmdSetDefault(pi, ctx);
+			else if (action.startsWith("Automatic")) await cmdAutoSwitch(ctx);
 			else if (action.startsWith("Server")) await cmdStatus(ctx);
 			else if (action.startsWith("Remove")) await cmdRemove(pi, ctx);
 		},
@@ -453,10 +575,10 @@ export default function (pi: ExtensionAPI) {
 
 	// Apply load-time settings when switching to a configured model.
 	pi.on("model_select", async (event, ctx) => {
-		if (event.source === "restore") return;
 		if (event.model.provider !== PROVIDER_ID) return;
 		const cfg = readConfig();
 		const provider = cfg.providers[PROVIDER_ID];
+		if (event.source === "restore" && provider?.defaultModelId && event.model.id !== provider.defaultModelId) return;
 		const settings = provider?.models[event.model.id];
 		if (!provider || !settings) return;
 		// Fire-and-forget: loads can take minutes; notify on completion.
@@ -478,5 +600,17 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		sessionCtx = ctx;
 		if (ctx.hasUI) ctx.ui.setWidget("unsloth-status", undefined);
+
+		const cfg = readConfig();
+		const provider = cfg.providers[PROVIDER_ID];
+		const currentId = ctx.model?.provider === PROVIDER_ID ? ctx.model.id : undefined;
+		const targetId = startupModelId(provider, currentId);
+		if (!provider || !targetId) return;
+		if (ctx.model?.provider !== PROVIDER_ID || ctx.model.id !== targetId) {
+			const target = ctx.modelRegistry.find(PROVIDER_ID, targetId);
+			if (target) await pi.setModel(target);
+			return;
+		}
+		await applyLoadSettings(ctx, provider, targetId, provider.models[targetId]);
 	});
 }

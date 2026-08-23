@@ -6,7 +6,14 @@
 
 import { createHash } from "node:crypto";
 import type { ProviderAuthInteraction } from "@earendil-works/pi-ai";
-import type { LoadSettings, SamplingSettings, UnslothModelSettings } from "./config.ts";
+import type {
+	DraftSpeculation,
+	LoadSettings,
+	NgramSpeculation,
+	SamplingSettings,
+	SpeculativeSettings,
+	UnslothModelSettings,
+} from "./config.ts";
 import type { DiscoveredModel } from "./discover.ts";
 import { matchesActiveModel, thinkingConfigFor, type ReasoningInfo } from "./thinking.ts";
 import { fetchHuggingFaceTemplates, mergeTemplateLibrary, type ChatTemplate } from "./chat-template.ts";
@@ -44,6 +51,19 @@ export function parseInt_(raw: string | undefined): number | undefined {
 	if (n === undefined) return undefined;
 	if (!Number.isInteger(n)) throw new Error(`"${raw}" is not a whole number`);
 	return n;
+}
+
+export function parseIntInRange(
+	raw: string | undefined,
+	min: number,
+	max: number,
+	label: string,
+): number | undefined {
+	const value = parseInt_(raw);
+	if (value !== undefined && (value < min || value > max)) {
+		throw new Error(`${label} must be between ${min} and ${max}`);
+	}
+	return value;
 }
 
 /** Normalize a server URL to pi's baseUrl form (ends in /v1). */
@@ -141,13 +161,148 @@ export async function chatTemplateWizard(
 }
 
 const KV_TYPES = ["server default", "f16", "bf16", "q8_0", "q4_0", "iq4_nl"];
-const SPEC_TYPES = [
-	"auto — MTP when the GGUF supports it (recommended)",
-	"off — no speculative decoding",
-	"mtp — force MTP draft",
-	"mtp+ngram — MTP with ngram fallback",
-	"ngram — ngram fallback only",
+const DRAFT_TYPES = [
+	{ id: "server-default", label: "Auto — let Unsloth choose" },
+	{ id: "none", label: "Off — no draft model" },
+	{ id: "mtp", label: "MTP — use prediction heads in the main model" },
+	{ id: "dflash", label: "DFlash — use a separate DFlash helper model" },
 ];
+const NGRAM_TYPES = [
+	{ id: "none", label: "Off — no n-gram helper" },
+	{ id: "cache", label: "Cache — remember repeated text across requests" },
+	{ id: "mod", label: "Mod — shared rolling pattern memory" },
+	{ id: "simple", label: "Simple — search the current text" },
+	{ id: "map-k", label: "Map — indexed pattern search" },
+	{ id: "map-k4v", label: "Map-4 — indexed search with four suggestions" },
+];
+const KV_UNIFIED_FLAGS = new Set(["--kv-unified", "-kvu"]);
+
+function argValue(args: string[] | undefined, names: string[]): string | undefined {
+	if (!args) return undefined;
+	for (let i = 0; i < args.length - 1; i++) {
+		if (names.includes(args[i])) return args[i + 1];
+	}
+	return undefined;
+}
+
+function existingSpeculation(load: LoadSettings | undefined): SpeculativeSettings {
+	if (load?.speculation) return load.speculation;
+	const rawType = argValue(load?.extraArgs, ["--spec-type"]);
+	const combinedType = rawType ?? load?.speculativeType ?? "server-default";
+	let draft: DraftSpeculation;
+	if (combinedType.includes("dflash")) {
+		const hf = argValue(load?.extraArgs, ["--spec-draft-hf", "--hf-repo-draft", "-hfd", "-hfrd"]);
+		const file = argValue(load?.extraArgs, ["--spec-draft-model", "--model-draft", "-md"]);
+		const source = hf
+			? { kind: "huggingface" as const, model: hf }
+			: { kind: "file" as const, path: file ?? "" };
+		draft = { kind: "dflash", source, ...(load?.specDraftNMax ? { depth: load.specDraftNMax } : {}) };
+	} else if (combinedType.includes("mtp")) {
+		draft = { kind: "mtp", ...(load?.specDraftNMax ? { depth: load.specDraftNMax } : {}) };
+	} else if (combinedType === "off" || combinedType === "none" || combinedType.startsWith("ngram")) {
+		draft = { kind: "none" };
+	} else {
+		draft = { kind: "server-default" };
+	}
+
+	const ngramName = ["cache", "mod", "simple", "map-k", "map-k4v"].find((kind) => combinedType.includes(`ngram-${kind}`));
+	const ngram: NgramSpeculation = ngramName === "cache"
+		? { kind: "cache" }
+		: ngramName === "mod" || combinedType === "ngram" || combinedType === "mtp+ngram"
+			? { kind: "mod" }
+			: ngramName === "simple" || ngramName === "map-k" || ngramName === "map-k4v"
+				? { kind: ngramName }
+				: { kind: "none" };
+	return { draft, ngram };
+}
+
+async function speculationWizard(ui: WizardInteraction, existing?: LoadSettings): Promise<SpeculativeSettings> {
+	const current = existingSpeculation(existing);
+	const draftOptions = [
+		...(existing ? [{ id: "__keep", label: `Keep current (${current.draft.kind})` }] : []),
+		...DRAFT_TYPES,
+	];
+	const draftChoice = await ui.select("Draft method", draftOptions);
+	if (!draftChoice) throw new Error("Cancelled");
+
+	const depthRaw = (
+		await ui.text(
+			"Draft depth (1–16)",
+			"depth" in current.draft && current.draft.depth ? `current: ${current.draft.depth}` : "server default",
+		)
+	).trim();
+	const depth = depthRaw === "-"
+		? undefined
+		: (parseIntInRange(depthRaw, 1, 16, "Draft depth") ?? ("depth" in current.draft ? current.draft.depth : undefined));
+
+	let draft: DraftSpeculation;
+	if (draftChoice === "__keep") {
+		draft = current.draft.kind === "mtp"
+			? { kind: "mtp", ...(depth ? { depth } : {}) }
+			: current.draft.kind === "dflash"
+				? { kind: "dflash", source: current.draft.source, ...(depth ? { depth } : {}) }
+				: current.draft;
+	} else if (draftChoice === "mtp") {
+		draft = { kind: "mtp", ...(depth ? { depth } : {}) };
+	} else if (draftChoice === "dflash") {
+		const currentSource = current.draft.kind === "dflash" ? current.draft.source : undefined;
+		const sourceChoice = await ui.select("DFlash helper location", [
+			...(currentSource ? [{ id: "__keep", label: `Keep current (${currentSource.kind})` }] : []),
+			{ id: "huggingface", label: "Hugging Face model and quant" },
+			{ id: "file", label: "GGUF file already on the Unsloth computer" },
+		]);
+		if (!sourceChoice) throw new Error("Cancelled");
+		const sourceKind = sourceChoice === "__keep" ? currentSource?.kind : sourceChoice;
+		if (sourceKind === "huggingface") {
+			const currentModel = currentSource?.kind === "huggingface" ? currentSource.model : "";
+			const model = (await ui.text("DFlash Hugging Face model", currentModel || "owner/model:quant")).trim() || currentModel;
+			if (!model) throw new Error("A DFlash helper model is required");
+			draft = { kind: "dflash", source: { kind: "huggingface", model }, ...(depth ? { depth } : {}) };
+		} else {
+			const currentPath = currentSource?.kind === "file" ? currentSource.path : "";
+			const path = (await ui.text("DFlash GGUF file on the Unsloth computer", currentPath || "C:\\models\\draft.gguf")).trim() || currentPath;
+			if (!path) throw new Error("A DFlash helper file is required");
+			draft = { kind: "dflash", source: { kind: "file", path }, ...(depth ? { depth } : {}) };
+		}
+	} else {
+		draft = draftChoice === "none" ? { kind: "none" } : { kind: "server-default" };
+	}
+
+	const ngramOptions = [
+		...(existing ? [{ id: "__keep", label: `Keep current (${current.ngram.kind})` }] : []),
+		...NGRAM_TYPES,
+	];
+	const ngramChoice = await ui.select("N-gram helper (can run beside the draft method)", ngramOptions);
+	if (!ngramChoice) throw new Error("Cancelled");
+	if (ngramChoice === "__keep") return { draft, ngram: current.ngram };
+	if (ngramChoice === "none" || ngramChoice === "cache") return { draft, ngram: { kind: ngramChoice } };
+
+	if (ngramChoice === "mod") {
+		const match = parseInt_(await ui.text("N-gram lookup length", "24 (server default)"));
+		const min = parseInt_(await ui.text("Minimum n-gram draft length", "48 (server default)"));
+		const max = parseInt_(await ui.text("Maximum n-gram draft length", "64 (server default)"));
+		return { draft, ngram: { kind: "mod", ...(match ? { match } : {}), ...(min ? { min } : {}), ...(max ? { max } : {}) } };
+	}
+
+	const sizeN = parseInt_(await ui.text("N-gram lookup length", "12 (server default)"));
+	const sizeM = parseInt_(await ui.text("N-gram proposed length", "48 (server default)"));
+	const minHits = parseInt_(await ui.text("Matches required before use", "1 (server default)"));
+	return {
+		draft,
+		ngram: {
+			kind: ngramChoice,
+			...(sizeN ? { sizeN } : {}),
+			...(sizeM ? { sizeM } : {}),
+			...(minHits ? { minHits } : {}),
+		},
+	};
+}
+
+function setKvUnified(args: string[] | undefined, enabled: boolean): string[] | undefined {
+	const filtered = (args ?? []).filter((arg) => !KV_UNIFIED_FLAGS.has(arg));
+	if (enabled) filtered.push("--kv-unified");
+	return filtered.length > 0 ? filtered : undefined;
+}
 
 /**
  * Step: full per-model settings. Load-time (llama.cpp structural), sampling,
@@ -193,22 +348,7 @@ export async function settingsWizard(
 	const cacheTypeKv =
 		kvChoice === "__keep" ? existing?.load?.cacheTypeKv : kvChoice !== "server default" ? kvChoice : undefined;
 
-	const specOptions = SPEC_TYPES.map((s) => ({ id: s.split(" ")[0], label: s }));
-	if (existing?.load?.speculativeType) {
-		specOptions.unshift({ id: "__keep", label: `Keep current (${existing.load.speculativeType})` });
-	}
-	const specChoice = await ui.select("Speculative decoding (MTP)", specOptions);
-	if (!specChoice) throw new Error("Cancelled");
-	const speculativeType =
-		specChoice === "__keep" ? existing?.load?.speculativeType : specChoice !== "auto" ? specChoice : undefined;
-
-	const draftRaw = (
-		await ui.text(
-			"Speculative draft tokens (1–16)",
-			existing?.load?.specDraftNMax ? `current: ${existing.load.specDraftNMax}` : "auto",
-		)
-	).trim();
-	const specDraftNMax = draftRaw === "-" ? undefined : (parseInt_(draftRaw) ?? existing?.load?.specDraftNMax);
+	const speculation = await speculationWizard(ui, existing?.load);
 
 	const parallelRaw = (
 		await ui.text(
@@ -218,6 +358,22 @@ export async function settingsWizard(
 	).trim();
 	const nParallel = parallelRaw === "-" ? undefined : (parseInt_(parallelRaw) ?? existing?.load?.nParallel);
 
+	let kvUnified: boolean | undefined;
+	if (nParallel !== undefined && nParallel > 1) {
+		const existingParallel = existing?.load?.nParallel;
+		const existingHasKvUnified = existing?.load?.extraArgs?.some((arg) => KV_UNIFIED_FLAGS.has(arg)) ?? false;
+		const kvOptions = [
+			...(existingParallel !== undefined && existingParallel > 1
+				? [{ id: "__keep", label: `Keep current (${existingHasKvUnified ? "enabled" : "off"})` }]
+				: []),
+			{ id: "yes", label: "Yes — share the context pool (recommended)" },
+			{ id: "no", label: "No — separate context per slot" },
+		];
+		const kvChoice = await ui.select("Enable shared context for parallel slots?", kvOptions);
+		if (!kvChoice) throw new Error("Cancelled");
+		kvUnified = kvChoice === "__keep" ? existingHasKvUnified : kvChoice === "yes";
+	}
+
 	const extraRaw = (
 		await ui.text(
 			"Extra llama.cpp args",
@@ -226,13 +382,18 @@ export async function settingsWizard(
 				: "e.g. --n-cpu-moe 4 --flash-attn",
 		)
 	).trim();
-	const extraArgs = extraRaw === "-" ? undefined : extraRaw === "" ? existing?.load?.extraArgs : extraRaw.split(/\s+/);
+	const enteredExtraArgs = extraRaw === "-" ? undefined : extraRaw === "" ? existing?.load?.extraArgs : extraRaw.split(/\s+/);
+	const extraArgs =
+		nParallel === 1
+			? setKvUnified(enteredExtraArgs, false)
+			: kvUnified === undefined
+				? enteredExtraArgs
+				: setKvUnified(enteredExtraArgs, kvUnified);
 
 	const load: LoadSettings = {
 		...(maxSeqLength ? { maxSeqLength } : {}),
 		...(cacheTypeKv ? { cacheTypeKv } : {}),
-		...(speculativeType ? { speculativeType } : {}),
-		...(specDraftNMax ? { specDraftNMax } : {}),
+		speculation,
 		...(nParallel ? { nParallel } : {}),
 		...(extraArgs ? { extraArgs } : {}),
 	};
