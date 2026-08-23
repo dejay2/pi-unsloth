@@ -246,9 +246,14 @@ function buildStructuredSpeculation(speculation: SpeculativeSettings): {
 		types.push(`ngram-${ngram.kind}`);
 		if (speculation.draft.kind === "none") speculativeType = "ngram";
 	}
-	if (types.length > 0) args.push("--spec-type", types.join(","));
-	else if (speculation.draft.kind === "none") args.push("--spec-type", "none");
-	appendNumberArg(args, "--spec-draft-n-max", draftDepth);
+	const usesNativeMtpNgram = speculation.draft.kind === "mtp" && ngram.kind === "mod";
+	if (usesNativeMtpNgram) {
+		speculativeType = "mtp+ngram";
+	} else {
+		if (types.length > 0) args.push("--spec-type", types.join(","));
+		else if (speculation.draft.kind === "none") args.push("--spec-type", "none");
+		appendNumberArg(args, "--spec-draft-n-max", draftDepth);
+	}
 
 	if (ngram.kind === "mod") {
 		appendNumberArg(args, "--spec-ngram-mod-n-match", ngram.match);

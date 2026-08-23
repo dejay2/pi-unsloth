@@ -129,7 +129,7 @@ test("n-gram cache alone does not also tell Unsloth to turn speculation off", ()
 	assert.deepEqual(payload.llama_extra_args, ["--spec-type", "ngram-cache"]);
 });
 
-test("n-gram mod settings are editable beside MTP", () => {
+test("MTP plus n-gram mod uses Unsloth's visible native controls", () => {
 	const payload = buildLoadPayload("org/model", {
 		load: {
 			speculation: {
@@ -138,9 +138,9 @@ test("n-gram mod settings are editable beside MTP", () => {
 			},
 		},
 	});
+	assert.equal(payload.speculative_type, "mtp+ngram");
+	assert.equal(payload.spec_draft_n_max, 2);
 	assert.deepEqual(payload.llama_extra_args, [
-		"--spec-type", "draft-mtp,ngram-mod",
-		"--spec-draft-n-max", "2",
 		"--spec-ngram-mod-n-match", "20",
 		"--spec-ngram-mod-n-min", "32",
 		"--spec-ngram-mod-n-max", "48",
