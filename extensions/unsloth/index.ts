@@ -66,6 +66,7 @@ const PROVIDER_ID = "unsloth";
 const VEHICLE_ID = "unsloth-server";
 
 let sessionCtx: ExtensionContext | undefined;
+let startupTargetId: string | undefined;
 
 function discoveryCfg(baseUrl: string, apiKey: string) {
 	return { baseUrl, api: "openai-completions", apiKey: resolveApiKey(apiKey) };
@@ -579,6 +580,7 @@ export default function (pi: ExtensionAPI) {
 		const cfg = readConfig();
 		const provider = cfg.providers[PROVIDER_ID];
 		if (event.source === "restore" && provider?.defaultModelId && event.model.id !== provider.defaultModelId) return;
+		if (event.model.id === startupTargetId) return;
 		const settings = provider?.models[event.model.id];
 		if (!provider || !settings) return;
 		// Fire-and-forget: loads can take minutes; notify on completion.
@@ -608,7 +610,13 @@ export default function (pi: ExtensionAPI) {
 		if (!provider || !targetId) return;
 		if (ctx.model?.provider !== PROVIDER_ID || ctx.model.id !== targetId) {
 			const target = ctx.modelRegistry.find(PROVIDER_ID, targetId);
-			if (target) await pi.setModel(target);
+			if (!target) return;
+			startupTargetId = targetId;
+			try {
+				if (await pi.setModel(target)) await applyLoadSettings(ctx, provider, targetId, provider.models[targetId]);
+			} finally {
+				startupTargetId = undefined;
+			}
 			return;
 		}
 		await applyLoadSettings(ctx, provider, targetId, provider.models[targetId]);

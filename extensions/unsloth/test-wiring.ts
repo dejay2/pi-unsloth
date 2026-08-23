@@ -68,6 +68,7 @@ if (indexCode) {
 	check("model restore reapplies the default without first loading an old non-default", () => {
 		assert.match(indexCode, /event\.source === "restore"[\s\S]*?provider\?\.defaultModelId[\s\S]*?event\.model\.id !== provider\.defaultModelId/);
 		assert.match(indexCode, /pi\.on\("session_start", async \(_event, ctx\) => \{[\s\S]*?ctx\.model/);
+		assert.match(indexCode, /startupTargetId = targetId[\s\S]*?await pi\.setModel\(target\)[\s\S]*?await applyLoadSettings/);
 	});
 }
 
