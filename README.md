@@ -25,19 +25,20 @@ Appears at the top of both login categories. The wizard:
 3. Pick a model → thinking control is **auto-detected** from Unsloth's own
    chat-template classification (`/api/inference/status`)
 4. Settings wizard (below)
-5. Provider is registered + persisted, settings applied on the server, pi
-   switches to the model
+5. Provider is registered + persisted, settings are applied on the server when
+   needed, and pi switches to the model for this session. Pi waits for you to
+   choose a model after it starts.
 
 ### `/unsloth` — manage afterwards
 
 | Action | What it does |
-|---|---|
+| --- | --- |
 | Add models from server | Multi-select more models/quants, run the settings wizard for each |
 | Configure a model's settings | Re-run the settings wizard — current values are preloaded: Enter keeps each one, "-" clears it, selects offer "Keep current" |
 | Apply settings + reload model on server | `POST /api/inference/load` with the saved settings |
-| Set default model | Restores it when pi starts and records it as Unsloth Studio's remembered model |
+| Use model now | Selects the model in pi now and applies its saved settings in Unsloth. Pi does not restore it on a later start. |
 | Automatic model switching | Turns Unsloth's request-driven model switching on or off without losing its other settings |
-| Server status | Loaded/default model, DFlash depth, n-gram method, chat-template source, and thinking style |
+| Server status | Loaded/server-remembered model, DFlash depth, n-gram method, chat-template source, and thinking style |
 | Remove a model | Removes from pi (server files untouched) |
 
 ### Settings per model
@@ -45,7 +46,9 @@ Appears at the top of both login categories. The wizard:
 **Chat template** — keep the model default, reuse a template previously used with that model, browse templates saved from all models, paste one directly, or paste a Hugging Face model name/page. For Hugging Face models, the main template is shown first and alternative templates remain selectable. The choice is applied as `chat_template_override` when the model reloads.
 
 **Load-time (llama.cpp structural)** — applied via `POST /api/inference/load`
-whenever you switch to the model in pi:
+when you switch to a model that Unsloth is not already running. Selecting the
+exact active model and quant leaves it running; use **Apply settings + reload**
+after changing these settings:
 context size, KV cache dtype, draft method (Auto, Off, MTP, or DFlash),
 DFlash helper model or server file, draft depth, an optional n-gram helper
 (Cache, Mod, Simple, Map, or Map-4), n-gram tuning, parallel slots, and raw
@@ -65,7 +68,7 @@ Unsloth classifies the loaded model's chat template; pi-unsloth maps that to
 pi config so the thinking selector actually works:
 
 | Unsloth style | Result |
-|---|---|
+| --- | --- |
 | `enable_thinking` (Qwen3.x) | on/off via `chat_template_kwargs.enable_thinking` + `preserve_thinking` |
 | `enable_thinking_effort` (GLM-5.2, DeepSeek-V4…) | on/off + only the template's real levels (e.g. high/max) |
 | `reasoning_effort` (gpt-oss) | levels; "off" maps to the `"none"` sentinel |
@@ -88,7 +91,9 @@ extensions/unsloth/
 ├── discover.ts     # /models fetching + Unsloth quant expansion
 ├── thinking.ts     # reasoning classification → pi thinking config
 ├── multiselect.ts  # checkbox-list TUI component
-└── test-*.ts       # unit tests (npm test)
+├── model-loading.ts # avoids duplicate server loads
+├── model-switch.ts  # reports Pi model-switch results
+└── test-*.ts        # unit tests (npm test)
 ```
 
 ## License

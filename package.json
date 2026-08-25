@@ -2,23 +2,36 @@
   "name": "pi-unsloth",
   "version": "1.3.2",
   "type": "module",
-  "description": "pi extension: Unsloth Studio models, DFlash and n-gram controls, saved defaults, and thinking-aware sampling",
+  "description": "pi extension: Unsloth Studio models, DFlash and n-gram controls, saved model settings, and thinking-aware sampling",
   "license": "MIT",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-ai": { "optional": true },
-    "@earendil-works/pi-coding-agent": { "optional": true },
-    "@earendil-works/pi-tui": { "optional": true }
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
   },
   "pi": {
-    "extensions": ["./extensions/unsloth/index.ts"]
+    "extensions": [
+      "./extensions/unsloth/index.ts"
+    ]
   },
   "scripts": {
-    "test": "node extensions/unsloth/test-chat-template.ts && node extensions/unsloth/test-config.ts && node extensions/unsloth/test-wizard.ts && node extensions/unsloth/test-api.ts && node extensions/unsloth/test-wiring.ts"
+    "test": "node extensions/unsloth/test-chat-template.ts && node extensions/unsloth/test-config.ts && node extensions/unsloth/test-wizard.ts && node extensions/unsloth/test-api.ts && node extensions/unsloth/test-model-loading.ts && node extensions/unsloth/test-model-switch.ts && node extensions/unsloth/test-wiring.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.3.0"
   }
 }

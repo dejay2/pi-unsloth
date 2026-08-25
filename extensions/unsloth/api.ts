@@ -2,12 +2,24 @@
  * Unsloth server API client. No pi imports — unit-testable with a mock server.
  */
 
-import { fetchModels, expandUnslothQuants, serverRoot, type DiscoveredModel, type DiscoveryConfig } from "./discover.ts";
+import {
+	fetchModels,
+	expandUnslothQuants,
+	serverRoot,
+	type DiscoveredModel,
+	type DiscoveryConfig,
+} from "./discover.ts";
 import { fetchUnslothReasoning, type ReasoningInfo } from "./thinking.ts";
-import { buildModelOverridePayload, splitModelRef, type UnslothModelSettings } from "./config.ts";
+import {
+	buildModelOverridePayload,
+	splitModelRef,
+	type UnslothModelSettings,
+} from "./config.ts";
 
 export interface UnslothStatus {
 	activeModel?: string;
+	modelIdentifier?: string;
+	ggufVariant?: string;
 	loaded: string[];
 	chatTemplate?: string;
 	chatTemplateOverride?: string;
@@ -17,22 +29,42 @@ export interface UnslothStatus {
 	raw: Record<string, unknown>;
 }
 
-export async function fetchStatus(cfg: DiscoveryConfig, timeoutMs = 8_000): Promise<UnslothStatus | null> {
+export async function fetchStatus(
+	cfg: DiscoveryConfig,
+	timeoutMs = 8_000,
+): Promise<UnslothStatus | null> {
 	const url = `${serverRoot(cfg.baseUrl)}/api/inference/status`;
 	try {
 		const headers: Record<string, string> = { accept: "application/json" };
 		if (cfg.apiKey) headers.authorization = `Bearer ${cfg.apiKey}`;
-		const res = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+		const res = await fetch(url, {
+			headers,
+			signal: AbortSignal.timeout(timeoutMs),
+		});
 		if (!res.ok) return null;
 		const raw = (await res.json()) as Record<string, unknown>;
-		if (typeof raw.supports_reasoning !== "boolean" && !raw.active_model) return null;
+		if (typeof raw.supports_reasoning !== "boolean" && !raw.active_model)
+			return null;
 		const reasoning = await fetchUnslothReasoning(cfg, timeoutMs);
 		return {
-			activeModel: typeof raw.active_model === "string" ? raw.active_model : undefined,
-			loaded: Array.isArray(raw.loaded) ? raw.loaded.filter((x): x is string => typeof x === "string") : [],
-			...(typeof raw.chat_template === "string" ? { chatTemplate: raw.chat_template } : {}),
-			...(typeof raw.chat_template_override === "string" ? { chatTemplateOverride: raw.chat_template_override } : {}),
-			...(typeof raw.spec_fallback_reason === "string" ? { specFallbackReason: raw.spec_fallback_reason } : {}),
+			activeModel:
+				typeof raw.active_model === "string" ? raw.active_model : undefined,
+			modelIdentifier:
+				typeof raw.model_identifier === "string" ? raw.model_identifier : undefined,
+			ggufVariant:
+				typeof raw.gguf_variant === "string" ? raw.gguf_variant : undefined,
+			loaded: Array.isArray(raw.loaded)
+				? raw.loaded.filter((x): x is string => typeof x === "string")
+				: [],
+			...(typeof raw.chat_template === "string"
+				? { chatTemplate: raw.chat_template }
+				: {}),
+			...(typeof raw.chat_template_override === "string"
+				? { chatTemplateOverride: raw.chat_template_override }
+				: {}),
+			...(typeof raw.spec_fallback_reason === "string"
+				? { specFallbackReason: raw.spec_fallback_reason }
+				: {}),
 			reasoning,
 			raw,
 		};
@@ -42,7 +74,9 @@ export async function fetchStatus(cfg: DiscoveryConfig, timeoutMs = 8_000): Prom
 }
 
 /** List all models with per-quant expansion (Unsloth-aware). */
-export async function listModels(cfg: DiscoveryConfig): Promise<DiscoveredModel[] | null> {
+export async function listModels(
+	cfg: DiscoveryConfig,
+): Promise<DiscoveredModel[] | null> {
 	const models = await fetchModels(cfg);
 	if (!models) return null;
 	return expandUnslothQuants(cfg, models);
@@ -84,7 +118,11 @@ export async function saveModelOverride(
 		}
 		return { ok: false, status: res.status, error: String(detail).slice(0, 300) };
 	} catch (err) {
-		return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
+		return {
+			ok: false,
+			status: 0,
+			error: err instanceof Error ? err.message : String(err),
+		};
 	}
 }
 
@@ -99,7 +137,10 @@ export async function saveLastLocalModel(
 	const { modelPath, variant } = splitModelRef(modelId);
 	const url = `${serverRoot(cfg.baseUrl)}/api/settings/last-local-model`;
 	try {
-		const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json" };
+		const headers: Record<string, string> = {
+			"content-type": "application/json",
+			accept: "application/json",
+		};
 		if (cfg.apiKey) headers.authorization = `Bearer ${cfg.apiKey}`;
 		const res = await fetch(url, {
 			method: "PUT",
@@ -117,7 +158,11 @@ export async function saveLastLocalModel(
 			? { ok: true, status: res.status }
 			: { ok: false, status: res.status, error: (await res.text()).slice(0, 300) };
 	} catch (err) {
-		return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
+		return {
+			ok: false,
+			status: 0,
+			error: err instanceof Error ? err.message : String(err),
+		};
 	}
 }
 
@@ -129,10 +174,19 @@ export async function fetchAutoSwitch(
 	try {
 		const headers: Record<string, string> = { accept: "application/json" };
 		if (cfg.apiKey) headers.authorization = `Bearer ${cfg.apiKey}`;
-		const res = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+		const res = await fetch(url, {
+			headers,
+			signal: AbortSignal.timeout(timeoutMs),
+		});
 		if (!res.ok) return null;
 		const body: unknown = await res.json();
-		if (!body || typeof body !== "object" || Array.isArray(body) || !("enabled" in body) || typeof body.enabled !== "boolean") {
+		if (
+			!body ||
+			typeof body !== "object" ||
+			Array.isArray(body) ||
+			!("enabled" in body) ||
+			typeof body.enabled !== "boolean"
+		) {
 			return null;
 		}
 		return { ...body, enabled: body.enabled };
@@ -147,10 +201,18 @@ export async function setAutoSwitch(
 	timeoutMs = 10_000,
 ): Promise<LoadResult> {
 	const current = await fetchAutoSwitch(cfg, timeoutMs);
-	if (!current) return { ok: false, status: 0, error: "Could not read the current automatic model switching settings" };
+	if (!current)
+		return {
+			ok: false,
+			status: 0,
+			error: "Could not read the current automatic model switching settings",
+		};
 	const url = `${serverRoot(cfg.baseUrl)}/api/settings/openai-auto-switch`;
 	try {
-		const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json" };
+		const headers: Record<string, string> = {
+			"content-type": "application/json",
+			accept: "application/json",
+		};
 		if (cfg.apiKey) headers.authorization = `Bearer ${cfg.apiKey}`;
 		const res = await fetch(url, {
 			method: "PUT",
@@ -162,7 +224,11 @@ export async function setAutoSwitch(
 			? { ok: true, status: res.status }
 			: { ok: false, status: res.status, error: (await res.text()).slice(0, 300) };
 	} catch (err) {
-		return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
+		return {
+			ok: false,
+			status: 0,
+			error: err instanceof Error ? err.message : String(err),
+		};
 	}
 }
 
@@ -174,7 +240,10 @@ export async function loadModel(
 ): Promise<LoadResult> {
 	const url = `${serverRoot(cfg.baseUrl)}/api/inference/load`;
 	try {
-		const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json" };
+		const headers: Record<string, string> = {
+			"content-type": "application/json",
+			accept: "application/json",
+		};
 		if (cfg.apiKey) headers.authorization = `Bearer ${cfg.apiKey}`;
 		const res = await fetch(url, {
 			method: "POST",
@@ -192,6 +261,10 @@ export async function loadModel(
 		}
 		return { ok: false, status: res.status, error: String(detail).slice(0, 300) };
 	} catch (err) {
-		return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
+		return {
+			ok: false,
+			status: 0,
+			error: err instanceof Error ? err.message : String(err),
+		};
 	}
 }
